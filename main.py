@@ -215,13 +215,16 @@ async def update_username(device_id: str, request: UpdateUsernameRequest):
             )
         
         # Update username
-        result = supabase.table("players").update({
+        update_result = supabase.table("players").update({
             "user_name": request.username,
             "updated_at": datetime.now().isoformat()
-        }).eq("device_id", device_id).select("*").execute()
+        }).eq("device_id", device_id).execute()
         
-        if not result.data:
+        if not update_result.data:
             raise HTTPException(status_code=500, detail={"error": "updateFailed", "message": "Failed to update username"})
+        
+        # Get the updated player data
+        result = supabase.table("players").select("*").eq("device_id", device_id).execute()
         
         return PlayerData(**result.data[0])
         
