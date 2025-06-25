@@ -276,5 +276,94 @@ async def delete_player(device_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
 
+# Development Endpoints - For debugging and data inspection
+
+@app.get("/dev/tables", tags=["Development"])
+async def list_all_tables():
+    """Development endpoint - List all database tables"""
+    try:
+        # For now, return the known tables. In future, you can add more tables here
+        tables = ["players"]  # Add more table names as you create them
+        
+        return {
+            "tables": [{"name": table, "schema": "public"} for table in tables],
+            "count": len(tables),
+            "note": "Manually maintained list - add new tables to this endpoint as needed"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
+
+@app.get("/dev/players", tags=["Development"])
+async def view_all_players():
+    """Development endpoint - View all players in the database"""
+    try:
+        result = supabase.table("players").select("*").execute()
+        
+        return {
+            "table": "players",
+            "count": len(result.data) if result.data else 0,
+            "data": result.data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
+
+@app.get("/dev/players/stats", tags=["Development"])
+async def players_statistics():
+    """Development endpoint - Get players table statistics"""
+    try:
+        # Get basic counts and stats
+        all_players = supabase.table("players").select("*").execute()
+        
+        if not all_players.data:
+            return {
+                "table": "players",
+                "total_players": 0,
+                "players_with_username": 0,
+                "players_without_username": 0,
+                "average_gold": 0,
+                "average_diamond": 0,
+                "average_elo": 0
+            }
+        
+        players = all_players.data
+        with_username = len([p for p in players if p.get("user_name")])
+        without_username = len(players) - with_username
+        
+        avg_gold = sum(p.get("gold", 0) for p in players) / len(players)
+        avg_diamond = sum(p.get("diamond", 0) for p in players) / len(players)
+        avg_elo = sum(p.get("elo", 1000) for p in players) / len(players)
+        
+        return {
+            "table": "players",
+            "total_players": len(players),
+            "players_with_username": with_username,
+            "players_without_username": without_username,
+            "average_gold": round(avg_gold, 2),
+            "average_diamond": round(avg_diamond, 2),
+            "average_elo": round(avg_elo, 2),
+            "latest_player": players[-1] if players else None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
+
+@app.delete("/dev/players/clear", tags=["Development"])
+async def clear_all_players():
+    """Development endpoint - DANGER: Clear all players (for testing only)"""
+    try:
+        # Get count before deletion
+        count_result = supabase.table("players").select("device_id").execute()
+        initial_count = len(count_result.data) if count_result.data else 0
+        
+        # Delete all players
+        result = supabase.table("players").delete().neq("device_id", "").execute()
+        
+        return {
+            "success": True,
+            "message": f"Cleared all players from database",
+            "deleted_count": initial_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 
