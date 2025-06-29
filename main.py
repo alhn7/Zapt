@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel, Field
 import uvicorn
 from datetime import datetime
@@ -7,6 +7,11 @@ import socket
 from supabase import create_client, Client
 import os
 from typing import List, Optional
+
+# Lobby system imports
+from lobby.routes import lobby_router, init_lobby_service
+from lobby.websocket import init_websocket_handler, get_websocket_handler
+from lobby.utils import log_lobby_event
 
 # Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://bvmeayqagxnxndwnacjr.supabase.co")
@@ -17,10 +22,17 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Create FastAPI instance
 app = FastAPI(
-    title="Player Authentication API",
-    description="A FastAPI application with Supabase for player authentication using device ID",
+    title="Player Authentication & Lobby API",
+    description="A FastAPI application with Supabase for player authentication and 1v1 lobby system",
     version="1.0.0"
 )
+
+# Initialize lobby system
+init_lobby_service(supabase)
+init_websocket_handler(supabase)
+
+# Include lobby routes
+app.include_router(lobby_router)
 
 # Request Models
 class CreatePlayerRequest(BaseModel):
@@ -364,6 +376,21 @@ async def clear_all_players():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
+
+# WebSocket endpoint for lobby real-time communication
+@app.websocket("/ws/lobby/{lobby_code}")
+async def websocket_lobby_endpoint(websocket: WebSocket, lobby_code: str, device_id: str):
+    """
+    WebSocket endpoint for real-time lobby communication
+    
+    Parameters:
+    - lobby_code: 4-character lobby code
+    - device_id: Player's device ID (passed as query parameter)
+    
+    Usage: ws://localhost:8000/ws/lobby/ABCD?device_id=your_device_id
+    """
+    handler = get_websocket_handler()
+    await handler.handle_connection(websocket, lobby_code, device_id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 

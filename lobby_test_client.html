@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zapt Lobby System Test Client</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background-color: #f5f5f5;
+        }
+        .container { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            margin-bottom: 20px;
+        }
+        .section { 
+            margin-bottom: 30px; 
+            padding: 15px; 
+            border: 1px solid #ddd; 
+            border-radius: 5px; 
+        }
+        .section h3 { 
+            margin-top: 0; 
+            color: #333; 
+        }
+        .button-group { 
+            margin: 10px 0; 
+        }
+        button { 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            padding: 8px 16px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            margin: 2px; 
+        }
+        button:hover { 
+            background: #0056b3; 
+        }
+        button:disabled { 
+            background: #ccc; 
+            cursor: not-allowed; 
+        }
+        input, select { 
+            padding: 8px; 
+            margin: 2px; 
+            border: 1px solid #ddd; 
+            border-radius: 4px; 
+        }
+        .status { 
+            background: #e9ecef; 
+            padding: 10px; 
+            border-radius: 4px; 
+            margin: 10px 0; 
+            font-family: monospace; 
+            font-size: 12px; 
+        }
+        .connected { 
+            color: green; 
+        }
+        .disconnected { 
+            color: red; 
+        }
+        .error { 
+            color: red; 
+            background: #f8d7da; 
+            border: 1px solid #f5c6cb; 
+        }
+        .success { 
+            color: green; 
+            background: #d4edda; 
+            border: 1px solid #c3e6cb; 
+        }
+        .log { 
+            height: 200px; 
+            overflow-y: auto; 
+            background: #f8f9fa; 
+            border: 1px solid #ddd; 
+            padding: 10px; 
+            font-family: monospace; 
+            font-size: 11px; 
+        }
+        .player-list { 
+            display: flex; 
+            gap: 10px; 
+            flex-wrap: wrap; 
+        }
+        .player-card { 
+            border: 1px solid #ddd; 
+            padding: 10px; 
+            border-radius: 4px; 
+            min-width: 150px; 
+        }
+        .ready { 
+            background: #d4edda; 
+        }
+        .not-ready { 
+            background: #f8d7da; 
+        }
+        .countdown { 
+            font-size: 24px; 
+            text-align: center; 
+            padding: 20px; 
+            background: #fff3cd; 
+            border: 2px solid #ffeaa7; 
+            border-radius: 8px; 
+            margin: 10px 0; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Zapt Lobby System Test Client</h1>
+        
+        <!-- Device ID Setup -->
+        <div class="section">
+            <h3>🔧 Setup</h3>
+            <label>Device ID: <input type="text" id="deviceId" placeholder="Enter your device ID" value="test_device_1"></label>
+            <label>Server URL: <input type="text" id="serverUrl" value="http://localhost:8000"></label>
+            <button onclick="updateDeviceId()">Set Device ID</button>
+            <div class="status" id="deviceStatus">Device ID: Not set</div>
+        </div>
+
+        <!-- Matchmaking -->
+        <div class="section">
+            <h3>🔍 Matchmaking</h3>
+            <div class="button-group">
+                <button onclick="findMatch()">Find Match</button>
+                <button onclick="leaveQueue()">Leave Queue</button>
+                <button onclick="getQueueStatus()">Check Queue Status</button>
+            </div>
+            <div class="status" id="matchmakingStatus">Not in queue</div>
+        </div>
+
+        <!-- Manual Lobby -->
+        <div class="section">
+            <h3>🏠 Manual Lobby</h3>
+            <div class="button-group">
+                <button onclick="createLobby()">Create Lobby</button>
+                <input type="text" id="joinCode" placeholder="ABCD" maxlength="4" style="text-transform: uppercase;">
+                <button onclick="joinLobby()">Join Lobby</button>
+                <button onclick="leaveLobby()">Leave Lobby</button>
+            </div>
+            <div class="status" id="lobbyStatus">Not in any lobby</div>
+        </div>
+
+        <!-- Lobby Controls -->
+        <div class="section">
+            <h3>⚡ Lobby Controls</h3>
+            <div class="button-group">
+                <button onclick="toggleReady(true)">Set Ready</button>
+                <button onclick="toggleReady(false)">Set Unready</button>
+                <button onclick="getLobbyStatus()">Refresh Status</button>
+            </div>
+            
+            <!-- Countdown Display -->
+            <div id="countdownDisplay" class="countdown" style="display: none;">
+                Game Starting in: <span id="countdownTimer">3</span>
+            </div>
+
+            <!-- Current Lobby Info -->
+            <div id="currentLobby" class="status">No lobby joined</div>
+            
+            <!-- Players List -->
+            <div id="playersList" class="player-list"></div>
+        </div>
+
+        <!-- WebSocket -->
+        <div class="section">
+            <h3>🔌 WebSocket Connection</h3>
+            <div class="button-group">
+                <button onclick="connectWebSocket()" id="wsConnectBtn">Connect to Lobby WebSocket</button>
+                <button onclick="disconnectWebSocket()" id="wsDisconnectBtn" disabled>Disconnect</button>
+            </div>
+            <div class="status" id="wsStatus" class="disconnected">WebSocket: Disconnected</div>
+        </div>
+
+        <!-- Events Log -->
+        <div class="section">
+            <h3>📋 Events Log</h3>
+            <button onclick="clearLog()">Clear Log</button>
+            <div id="eventsLog" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentDeviceId = 'test_device_1';
+        let serverUrl = 'http://localhost:8000';
+        let websocket = null;
+        let currentLobbyCode = null;
+        let countdownInterval = null;
+
+        // Utility functions
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logElement = document.getElementById('eventsLog');
+            const colorMap = {
+                'info': '#333',
+                'success': '#28a745',
+                'error': '#dc3545',
+                'warning': '#ffc107'
+            };
+            
+            logElement.innerHTML += `<div style="color: ${colorMap[type] || '#333'};">[${timestamp}] ${message}</div>`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('eventsLog').innerHTML = '';
+        }
+
+        function updateDeviceId() {
+            const input = document.getElementById('deviceId').value;
+            const serverInput = document.getElementById('serverUrl').value;
+            if (input.trim()) {
+                currentDeviceId = input.trim();
+                serverUrl = serverInput.trim();
+                document.getElementById('deviceStatus').textContent = `Device ID: ${currentDeviceId}`;
+                log(`Device ID set to: ${currentDeviceId}`, 'success');
+            }
+        }
+
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            try {
+                const options = {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Device-ID': currentDeviceId
+                    }
+                };
+                
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(`${serverUrl}${endpoint}`, options);
+                const data = await response.json();
+                
+                // Log the response with more detail for errors
+                if (response.ok) {
+                    log(`${method} ${endpoint}: ${response.status}`, 'success');
+                } else {
+                    const errorMsg = data.message || data.detail?.message || `HTTP ${response.status}`;
+                    log(`${method} ${endpoint}: ${response.status} - ${errorMsg}`, 'error');
+                }
+                
+                return { success: response.ok, data, status: response.status };
+            } catch (error) {
+                log(`API Error: ${error.message}`, 'error');
+                return { success: false, error: error.message };
+            }
+        }
+
+        // Matchmaking functions
+        async function findMatch() {
+            const result = await apiCall('/lobby/find_match', 'POST', {});
+            if (result.success) {
+                updateMatchmakingStatus(result.data);
+                if (result.data.lobby) {
+                    currentLobbyCode = result.data.lobby.code;
+                    updateLobbyDisplay(result.data.lobby);
+                }
+            } else {
+                // Show error message for matchmaking failure
+                const errorMsg = result.data?.message || 'Failed to enter matchmaking';
+                document.getElementById('matchmakingStatus').textContent = errorMsg;
+                document.getElementById('matchmakingStatus').className = 'status error';
+            }
+        }
+
+        async function leaveQueue() {
+            const result = await apiCall('/lobby/leave_queue', 'POST', {});
+            if (result.success) {
+                document.getElementById('matchmakingStatus').textContent = 'Left queue';
+                log('Left matchmaking queue', 'success');
+            }
+        }
+
+        async function getQueueStatus() {
+            const result = await apiCall('/lobby/queue_status', 'GET');
+            if (result.success) {
+                updateMatchmakingStatus(result.data);
+            }
+        }
+
+        function updateMatchmakingStatus(data) {
+            const status = document.getElementById('matchmakingStatus');
+            if (data.in_queue) {
+                status.textContent = `In queue - Position: ${data.queue_position}, ETA: ${data.estimated_wait_time}s`;
+                status.className = 'status';
+            } else {
+                status.textContent = data.message || 'Not in queue';
+                status.className = 'status';
+            }
+        }
+
+        // Lobby functions
+        async function createLobby() {
+            const result = await apiCall('/lobby/create', 'POST', {});
+            if (result.success && result.data.lobby) {
+                currentLobbyCode = result.data.lobby.code;
+                updateLobbyDisplay(result.data.lobby);
+                log(`Lobby created: ${result.data.lobby.code}`, 'success');
+            }
+        }
+
+        async function joinLobby() {
+            const code = document.getElementById('joinCode').value.toUpperCase();
+            if (!code || code.length !== 4) {
+                log('Please enter a 4-character lobby code', 'error');
+                return;
+            }
+
+            const result = await apiCall('/lobby/join', 'POST', { code });
+            if (result.success && result.data.lobby) {
+                currentLobbyCode = result.data.lobby.code;
+                updateLobbyDisplay(result.data.lobby);
+                log(`Joined lobby: ${code}`, 'success');
+            } else if (!result.success) {
+                // Show specific error message for join failure
+                const errorMsg = result.data?.message || 'Failed to join lobby';
+                document.getElementById('lobbyStatus').textContent = errorMsg;
+                document.getElementById('lobbyStatus').className = 'status error';
+                log(`Failed to join lobby ${code}: ${errorMsg}`, 'error');
+            }
+        }
+
+        async function leaveLobby() {
+            const result = await apiCall('/lobby/leave', 'POST', {});
+            if (result.success) {
+                currentLobbyCode = null;
+                document.getElementById('currentLobby').textContent = 'Left lobby';
+                document.getElementById('playersList').innerHTML = '';
+                hideCountdown();
+                log('Left lobby', 'success');
+                
+                // Disconnect WebSocket
+                if (websocket) {
+                    disconnectWebSocket();
+                }
+            }
+        }
+
+        async function toggleReady(isReady) {
+            const result = await apiCall('/lobby/ready', 'POST', { is_ready: isReady });
+            if (result.success && result.data.lobby) {
+                updateLobbyDisplay(result.data.lobby);
+                log(`Set ready status to: ${isReady}`, 'success');
+            }
+        }
+
+        async function getLobbyStatus() {
+            const result = await apiCall('/lobby/status', 'GET');
+            if (result.success && result.data.lobby) {
+                updateLobbyDisplay(result.data.lobby);
+            }
+        }
+
+        function updateLobbyDisplay(lobby) {
+            document.getElementById('lobbyStatus').textContent = `In lobby: ${lobby.code}`;
+            document.getElementById('currentLobby').textContent = 
+                `Lobby ${lobby.code} - Status: ${lobby.status} - Players: ${lobby.current_players}/${lobby.max_players}`;
+            
+            // Update players list
+            const playersList = document.getElementById('playersList');
+            playersList.innerHTML = '';
+            
+            lobby.players.forEach(player => {
+                const playerCard = document.createElement('div');
+                playerCard.className = `player-card ${player.is_ready ? 'ready' : 'not-ready'}`;
+                playerCard.innerHTML = `
+                    <strong>${player.user_name || player.device_id}</strong><br>
+                    <small>${player.device_id}</small><br>
+                    Status: ${player.is_ready ? '✅ Ready' : '❌ Not Ready'}
+                `;
+                playersList.appendChild(playerCard);
+            });
+
+            // Handle countdown
+            if (lobby.status === 'countdown') {
+                showCountdown();
+            } else {
+                hideCountdown();
+            }
+        }
+
+        // WebSocket functions
+        function connectWebSocket() {
+            if (!currentLobbyCode) {
+                log('Cannot connect: Not in any lobby', 'error');
+                return;
+            }
+
+            if (websocket) {
+                disconnectWebSocket();
+            }
+
+            const wsUrl = serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+            const url = `${wsUrl}/ws/lobby/${currentLobbyCode}?device_id=${currentDeviceId}`;
+            
+            log(`Connecting to WebSocket: ${url}`, 'info');
+            
+            websocket = new WebSocket(url);
+            
+            websocket.onopen = function(event) {
+                document.getElementById('wsStatus').textContent = 'WebSocket: Connected';
+                document.getElementById('wsStatus').className = 'status connected';
+                document.getElementById('wsConnectBtn').disabled = true;
+                document.getElementById('wsDisconnectBtn').disabled = false;
+                log('WebSocket connected', 'success');
+            };
+            
+            websocket.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (error) {
+                    log(`WebSocket message parse error: ${error.message}`, 'error');
+                }
+            };
+            
+            websocket.onclose = function(event) {
+                document.getElementById('wsStatus').textContent = 'WebSocket: Disconnected';
+                document.getElementById('wsStatus').className = 'status disconnected';
+                document.getElementById('wsConnectBtn').disabled = false;
+                document.getElementById('wsDisconnectBtn').disabled = true;
+                log(`WebSocket disconnected: ${event.code} ${event.reason}`, 'warning');
+                websocket = null;
+            };
+            
+            websocket.onerror = function(error) {
+                log(`WebSocket error: ${error}`, 'error');
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+        }
+
+        function handleWebSocketMessage(message) {
+            log(`WS Event: ${message.type}`, 'info');
+            
+            switch (message.type) {
+                case 'player_joined':
+                    if (message.data.lobby) {
+                        updateLobbyDisplay(message.data.lobby);
+                    }
+                    break;
+                    
+                case 'player_left':
+                    if (message.data.lobby) {
+                        updateLobbyDisplay(message.data.lobby);
+                    }
+                    log(`Player left: ${message.data.device_id}`, 'warning');
+                    break;
+                    
+                case 'ready_status_changed':
+                    if (message.data.lobby) {
+                        updateLobbyDisplay(message.data.lobby);
+                    }
+                    log(`${message.data.device_id} is now ${message.data.is_ready ? 'ready' : 'unready'}`, 'info');
+                    break;
+                    
+                case 'countdown_started':
+                    log('Countdown started!', 'success');
+                    showCountdown();
+                    break;
+                    
+                case 'countdown_tick':
+                    updateCountdownTimer(message.data.seconds_remaining);
+                    break;
+                    
+                case 'countdown_aborted':
+                    log('Countdown aborted', 'warning');
+                    hideCountdown();
+                    break;
+                    
+                case 'game_started':
+                    log('🎮 GAME STARTED!', 'success');
+                    hideCountdown();
+                    break;
+                    
+                case 'lobby_deleted':
+                    log('Lobby was deleted', 'warning');
+                    currentLobbyCode = null;
+                    document.getElementById('currentLobby').textContent = 'Lobby deleted';
+                    document.getElementById('playersList').innerHTML = '';
+                    disconnectWebSocket();
+                    break;
+                    
+                case 'error':
+                    log(`WebSocket Error: ${message.data.message}`, 'error');
+                    break;
+            }
+        }
+
+        // Countdown functions
+        function showCountdown() {
+            document.getElementById('countdownDisplay').style.display = 'block';
+            updateCountdownTimer(3);
+        }
+
+        function hideCountdown() {
+            document.getElementById('countdownDisplay').style.display = 'none';
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+        }
+
+        function updateCountdownTimer(seconds) {
+            document.getElementById('countdownTimer').textContent = seconds;
+            
+            if (seconds === 0) {
+                setTimeout(() => {
+                    hideCountdown();
+                }, 1000);
+            }
+        }
+
+        // Auto-update device ID on page load
+        window.onload = function() {
+            updateDeviceId();
+            log('Test client loaded. Set your device ID and start testing!', 'success');
+        }
+
+        // Handle input formatting
+        document.getElementById('joinCode').addEventListener('input', function(e) {
+            e.target.value = e.target.value.toUpperCase();
+        });
+    </script>
+</body>
+</html> 
