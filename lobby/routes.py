@@ -14,6 +14,13 @@ from .utils import (
 )
 from .matchmaking import MatchmakingService
 
+# WebSocket broadcast imports
+from .websocket import (
+    broadcast_ready_status_changed,
+    broadcast_countdown_started,
+    broadcast_countdown_aborted
+)
+
 # Create router
 lobby_router = APIRouter(prefix="/lobby", tags=["Lobby"])
 
@@ -377,6 +384,7 @@ class LobbyService:
                     "lobby_code": lobby_with_members.lobby.code
                 })
                 
+                
             elif not all_ready and lobby_with_members.lobby.status == LobbyStatus.COUNTDOWN:
                 # Abort countdown
                 update_data = {
@@ -402,6 +410,27 @@ class LobbyService:
             
             # Get final lobby state
             final_lobby = await self._get_lobby_with_members(lobby_id)
+            lobby_info = final_lobby.to_lobby_info()
+            
+            # WebSocket broadcast ready status change
+            await broadcast_ready_status_changed(
+                final_lobby.lobby.code,
+                device_id,
+                is_ready,
+                lobby_info.dict()
+            )
+            
+            # WebSocket broadcast countdown events
+            if final_lobby.lobby.status == LobbyStatus.COUNTDOWN:
+                await broadcast_countdown_started(
+                    final_lobby.lobby.code,
+                    lobby_info.dict()
+                )
+            elif update_data.get("status") == LobbyStatus.READY_CHECK.value:
+                await broadcast_countdown_aborted(
+                    final_lobby.lobby.code,
+                    lobby_info.dict()
+                )
             
             log_lobby_event("ready_toggle", {
                 "lobby_code": final_lobby.lobby.code,
@@ -412,7 +441,7 @@ class LobbyService:
             
             return LobbyResponse(
                 success=True,
-                lobby=final_lobby.to_lobby_info(),
+                lobby=lobby_info,
                 message=f"Ready status updated to {is_ready}"
             )
             
