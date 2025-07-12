@@ -1,4 +1,4 @@
-#dev test
+#dev test2
 from fastapi import FastAPI, HTTPException, WebSocket
 from pydantic import BaseModel, Field
 import uvicorn
@@ -378,99 +378,6 @@ async def clear_all_players():
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
 
-@app.get("/dev/websocket/connections", tags=["Development"])
-async def get_websocket_connections():
-    """Development endpoint - Get current WebSocket connection state"""
-    try:
-        from lobby.websocket import manager
-        
-        connection_info = {
-            "active_lobbies": list(manager.active_connections.keys()),
-            "total_connections": sum(len(connections) for connections in manager.active_connections.values()),
-            "device_to_lobby_mappings": len(manager.device_to_lobby),
-            "countdown_tasks": list(manager.countdown_tasks.keys()),
-            "detailed_connections": {}
-        }
-        
-        # Add detailed info for each lobby
-        for lobby_code, connections in manager.active_connections.items():
-            connection_info["detailed_connections"][lobby_code] = {
-                "connected_devices": list(connections.keys()),
-                "connection_count": len(connections),
-                "has_countdown_task": lobby_code in manager.countdown_tasks
-            }
-        
-        # Add device mappings
-        connection_info["device_mappings"] = dict(manager.device_to_lobby)
-        
-        return connection_info
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
-
-@app.get("/dev/websocket/debug/{lobby_code}/{device_id}", tags=["Development"])
-async def get_websocket_debug_info(lobby_code: str, device_id: str):
-    """Development endpoint - Get detailed debug info for a specific connection"""
-    try:
-        from lobby.websocket import manager
-        from lobby.utils import log_websocket_debug_info
-        
-        # Log debug info (this will also log to file)
-        log_websocket_debug_info(lobby_code, device_id, manager, {
-            "source": "debug_endpoint",
-            "message": "Debug info requested via API"
-        })
-        
-        # Return the same info as response
-        debug_info = {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "timestamp": datetime.now().isoformat(),
-            "connection_manager_state": {
-                "active_lobbies": list(manager.active_connections.keys()),
-                "total_connections": sum(len(connections) for connections in manager.active_connections.values()),
-                "device_to_lobby_mappings": len(manager.device_to_lobby),
-                "countdown_tasks": list(manager.countdown_tasks.keys())
-            }
-        }
-        
-        # Add lobby-specific info
-        if lobby_code in manager.active_connections:
-            lobby_connections = manager.active_connections[lobby_code]
-            debug_info["lobby_specific"] = {
-                "lobby_exists": True,
-                "connected_devices": list(lobby_connections.keys()),
-                "connection_count": len(lobby_connections),
-                "device_connected": device_id in lobby_connections
-            }
-        else:
-            debug_info["lobby_specific"] = {
-                "lobby_exists": False,
-                "connected_devices": [],
-                "connection_count": 0,
-                "device_connected": False
-            }
-        
-        # Add device-specific info
-        if device_id in manager.device_to_lobby:
-            mapped_lobby = manager.device_to_lobby[device_id]
-            debug_info["device_specific"] = {
-                "has_lobby_mapping": True,
-                "mapped_lobby": mapped_lobby,
-                "mapping_matches": mapped_lobby == lobby_code
-            }
-        else:
-            debug_info["device_specific"] = {
-                "has_lobby_mapping": False,
-                "mapped_lobby": None,
-                "mapping_matches": False
-            }
-        
-        return debug_info
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": "internalError", "message": str(e)})
-
 # WebSocket endpoint for lobby real-time communication
 @app.websocket("/ws/lobby/{lobby_code}")
 async def websocket_lobby_endpoint(websocket: WebSocket, lobby_code: str, device_id: str):
@@ -483,65 +390,8 @@ async def websocket_lobby_endpoint(websocket: WebSocket, lobby_code: str, device
     
     Usage: ws://localhost:8000/ws/lobby/ABCD?device_id=your_device_id
     """
-    
-    log_lobby_event("websocket_endpoint_called", {
-        "lobby_code": lobby_code,
-        "device_id": device_id,
-        "client_host": websocket.client.host if websocket.client else "unknown",
-        "client_port": websocket.client.port if websocket.client else "unknown",
-        "headers": dict(websocket.headers),
-        "message": "WebSocket endpoint called"
-    }, device_id)
-    
-    try:
-        log_lobby_event("websocket_getting_handler", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "message": "Getting WebSocket handler instance"
-        }, device_id)
-        
-        handler = get_websocket_handler()
-        
-        log_lobby_event("websocket_handler_obtained", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "handler_type": type(handler).__name__,
-            "message": "WebSocket handler obtained successfully"
-        }, device_id)
-        
-        log_lobby_event("websocket_calling_handler", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "message": "Calling WebSocket handler"
-        }, device_id)
-        
-        await handler.handle_connection(websocket, lobby_code, device_id)
-        
-        log_lobby_event("websocket_handler_returned", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "message": "WebSocket handler returned successfully"
-        }, device_id)
-        
-    except HTTPException as e:
-        log_lobby_event("websocket_endpoint_http_error", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "error": str(e),
-            "status_code": e.status_code,
-            "detail": e.detail,
-            "message": "HTTP error in WebSocket endpoint"
-        }, device_id)
-        raise
-    except Exception as e:
-        log_lobby_event("websocket_endpoint_error", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "message": "Unexpected error in WebSocket endpoint"
-        }, device_id)
-        raise
+    handler = get_websocket_handler()
+    await handler.handle_connection(websocket, lobby_code, device_id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 
