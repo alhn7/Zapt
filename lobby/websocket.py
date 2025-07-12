@@ -84,10 +84,32 @@ class ConnectionManager:
     
     async def broadcast_to_lobby(self, message: dict, lobby_code: str, exclude_device: Optional[str] = None):
         """Broadcast message to all players in a lobby"""
+        
+        # DEBUG: Log broadcast attempt
+        log_lobby_event("broadcast_attempt", {
+            "lobby_code": lobby_code,
+            "message_type": message.get("type", "unknown"),
+            "active_lobbies": list(self.active_connections.keys()),
+            "has_lobby": lobby_code in self.active_connections
+        })
+        
         if lobby_code not in self.active_connections:
+            log_lobby_event("broadcast_failed_no_lobby", {
+                "lobby_code": lobby_code,
+                "message_type": message.get("type", "unknown"),
+                "active_lobbies": list(self.active_connections.keys())
+            })
             return
         
         connections = self.active_connections[lobby_code].copy()
+        
+        # DEBUG: Log connection count
+        log_lobby_event("broadcast_sending", {
+            "lobby_code": lobby_code,
+            "message_type": message.get("type", "unknown"),
+            "connection_count": len(connections),
+            "device_ids": list(connections.keys())
+        })
         
         for device_id, websocket in connections.items():
             if exclude_device and device_id == exclude_device:
@@ -95,6 +117,11 @@ class ConnectionManager:
                 
             try:
                 await websocket.send_text(json.dumps(message, default=str))
+                log_lobby_event("broadcast_sent", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "message_type": message.get("type", "unknown")
+                })
             except Exception as e:
                 log_lobby_event("websocket_broadcast_error", {
                     "lobby_code": lobby_code,
@@ -556,6 +583,14 @@ async def broadcast_player_left(lobby_code: str, device_id: str, lobby_info: dic
 
 async def broadcast_ready_status_changed(lobby_code: str, device_id: str, is_ready: bool, lobby_info: dict):
     """Broadcast ready status change event"""
+    
+    # DEBUG: Log the broadcast call
+    log_lobby_event("ready_broadcast_called", {
+        "lobby_code": lobby_code,
+        "device_id": device_id,
+        "is_ready": is_ready
+    })
+    
     message = WebSocketMessage(
         type=WebSocketEventType.READY_STATUS_CHANGED,
         data={
