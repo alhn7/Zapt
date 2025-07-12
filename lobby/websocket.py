@@ -28,6 +28,12 @@ class ConnectionManager:
     
     async def connect(self, websocket: WebSocket, lobby_code: str, device_id: str):
         """Accept WebSocket connection and register it"""
+        
+        log_lobby_event("manager_connect_called", {
+            "lobby_code": lobby_code,
+            "device_id": device_id
+        })
+        
         await websocket.accept()
         
         if lobby_code not in self.active_connections:
@@ -40,7 +46,8 @@ class ConnectionManager:
         log_lobby_event("websocket_connected", {
             "lobby_code": lobby_code,
             "device_id": device_id,
-            "total_connections": len(self.active_connections[lobby_code])
+            "total_connections": len(self.active_connections[lobby_code]),
+            "all_active_lobbies": list(self.active_connections.keys())
         }, device_id)
     
     def disconnect(self, lobby_code: str, device_id: str):
@@ -295,20 +302,47 @@ class LobbyWebSocketHandler:
     async def handle_connection(self, websocket: WebSocket, lobby_code: str, device_id: str):
         """Handle new WebSocket connection"""
         
+        # 🔍 DEBUG: Connection attempt
+        log_lobby_event("websocket_connection_attempt", {
+            "lobby_code": lobby_code,
+            "device_id": device_id
+        })
+        
         # Validate device_id
         if not validate_device_id(device_id):
+            log_lobby_event("websocket_invalid_device_id", {
+                "lobby_code": lobby_code,
+                "device_id": device_id
+            })
             await websocket.close(code=4001, reason="Invalid device_id")
             return
         
         # Validate lobby exists and player is member
         lobby_check = await self._validate_lobby_membership(lobby_code, device_id)
         if not lobby_check:
+            log_lobby_event("websocket_membership_failed", {
+                "lobby_code": lobby_code,
+                "device_id": device_id
+            })
             await websocket.close(code=4004, reason="Not a member of this lobby")
             return
+        
+        log_lobby_event("websocket_validation_passed", {
+            "lobby_code": lobby_code,
+            "device_id": device_id
+        })
         
         try:
             # Connect to lobby
             await manager.connect(websocket, lobby_code, device_id)
+            
+            # 🔍 DEBUG: After connect
+            log_lobby_event("websocket_after_connect", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "active_lobbies": list(manager.active_connections.keys()),
+                "lobby_connection_count": manager.get_lobby_connection_count(lobby_code)
+            })
             
             # Send initial lobby state
             await self._send_lobby_state(lobby_code, device_id)
@@ -319,10 +353,14 @@ class LobbyWebSocketHandler:
             # Listen for disconnection
             try:
                 while True:
-                    # Keep connection alive - in a real app you might want to handle incoming messages here
+                    # Keep connection alive
                     await websocket.receive_text()
                     
             except WebSocketDisconnect:
+                log_lobby_event("websocket_disconnect_received", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id
+                })
                 pass
                 
         except Exception as e:
@@ -333,6 +371,10 @@ class LobbyWebSocketHandler:
             })
         finally:
             # Handle disconnection
+            log_lobby_event("websocket_connection_ending", {
+                "lobby_code": lobby_code,
+                "device_id": device_id
+            })
             await self._handle_disconnection(lobby_code, device_id)
     
     async def _validate_lobby_membership(self, lobby_code: str, device_id: str) -> bool:
