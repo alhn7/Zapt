@@ -85,12 +85,13 @@ class ConnectionManager:
     async def broadcast_to_lobby(self, message: dict, lobby_code: str, exclude_device: Optional[str] = None):
         """Broadcast message to all players in a lobby"""
         
-        # DEBUG: Log broadcast attempt
+        # 🔍 CRITICAL DEBUG
         log_lobby_event("broadcast_attempt", {
             "lobby_code": lobby_code,
             "message_type": message.get("type", "unknown"),
-            "active_lobbies": list(self.active_connections.keys()),
-            "has_lobby": lobby_code in self.active_connections
+            "all_active_lobbies": list(self.active_connections.keys()),
+            "lobby_exists": lobby_code in self.active_connections,
+            "exclude_device": exclude_device
         })
         
         if lobby_code not in self.active_connections:
@@ -103,21 +104,27 @@ class ConnectionManager:
         
         connections = self.active_connections[lobby_code].copy()
         
-        # DEBUG: Log connection count
-        log_lobby_event("broadcast_sending", {
+        # 🔍 DEBUG: Connection details
+        log_lobby_event("broadcast_connections_found", {
             "lobby_code": lobby_code,
             "message_type": message.get("type", "unknown"),
-            "connection_count": len(connections),
+            "total_connections": len(connections),
             "device_ids": list(connections.keys())
         })
         
+        successful_sends = 0
         for device_id, websocket in connections.items():
             if exclude_device and device_id == exclude_device:
+                log_lobby_event("broadcast_excluded", {
+                    "lobby_code": lobby_code,
+                    "excluded_device": device_id
+                })
                 continue
                 
             try:
                 await websocket.send_text(json.dumps(message, default=str))
-                log_lobby_event("broadcast_sent", {
+                successful_sends += 1
+                log_lobby_event("broadcast_sent_success", {
                     "lobby_code": lobby_code,
                     "device_id": device_id,
                     "message_type": message.get("type", "unknown")
@@ -126,10 +133,19 @@ class ConnectionManager:
                 log_lobby_event("websocket_broadcast_error", {
                     "lobby_code": lobby_code,
                     "device_id": device_id,
-                    "error": str(e)
+                    "error": str(e),
+                    "message_type": message.get("type", "unknown")
                 })
                 # Remove broken connection
                 self.disconnect(lobby_code, device_id)
+        
+        # 🔍 Final broadcast summary
+        log_lobby_event("broadcast_summary", {
+            "lobby_code": lobby_code,
+            "message_type": message.get("type", "unknown"),
+            "successful_sends": successful_sends,
+            "total_attempts": len(connections)
+        })
     
     def get_lobby_connection_count(self, lobby_code: str) -> int:
         """Get number of active connections for a lobby"""
@@ -584,11 +600,13 @@ async def broadcast_player_left(lobby_code: str, device_id: str, lobby_info: dic
 async def broadcast_ready_status_changed(lobby_code: str, device_id: str, is_ready: bool, lobby_info: dict):
     """Broadcast ready status change event"""
     
-    # DEBUG: Log the broadcast call
+    # 🔍 CRITICAL DEBUG
     log_lobby_event("ready_broadcast_called", {
         "lobby_code": lobby_code,
         "device_id": device_id,
-        "is_ready": is_ready
+        "is_ready": is_ready,
+        "active_lobbies": list(manager.active_connections.keys()),
+        "lobby_exists_in_manager": lobby_code in manager.active_connections
     })
     
     message = WebSocketMessage(
@@ -600,7 +618,20 @@ async def broadcast_ready_status_changed(lobby_code: str, device_id: str, is_rea
         }
     ).dict()
     
+    # 🔍 DEBUG: Log the message being sent
+    log_lobby_event("ready_broadcast_message", {
+        "lobby_code": lobby_code,
+        "message_type": message["type"],
+        "message_data_keys": list(message["data"].keys())
+    })
+    
     await manager.broadcast_to_lobby(message, lobby_code)
+    
+    # 🔍 DEBUG: Log after broadcast attempt
+    log_lobby_event("ready_broadcast_completed", {
+        "lobby_code": lobby_code,
+        "device_id": device_id
+    })
 
 async def broadcast_countdown_started(lobby_code: str, lobby_info: dict):
     """Broadcast countdown started event and start countdown task"""
