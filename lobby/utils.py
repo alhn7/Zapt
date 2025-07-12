@@ -130,3 +130,68 @@ def get_countdown_remaining(countdown_start_time: datetime) -> int:
     elapsed = (datetime.now() - countdown_start_time.replace(tzinfo=None)).total_seconds()
     remaining = max(0, 3 - int(elapsed))
     return remaining 
+
+def log_websocket_debug_info(lobby_code: str, device_id: str, connection_manager, additional_info: dict = None):
+    """
+    Log comprehensive debug information about WebSocket connection state
+    This is a debugging utility function to help diagnose connection issues
+    """
+    try:
+        debug_info = {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "timestamp": datetime.now().isoformat(),
+            "connection_manager_state": {
+                "active_lobbies": list(connection_manager.active_connections.keys()),
+                "total_connections": sum(len(connections) for connections in connection_manager.active_connections.values()),
+                "device_to_lobby_mappings": len(connection_manager.device_to_lobby),
+                "countdown_tasks": list(connection_manager.countdown_tasks.keys())
+            }
+        }
+        
+        # Add lobby-specific info if lobby exists
+        if lobby_code in connection_manager.active_connections:
+            lobby_connections = connection_manager.active_connections[lobby_code]
+            debug_info["lobby_specific"] = {
+                "lobby_exists": True,
+                "connected_devices": list(lobby_connections.keys()),
+                "connection_count": len(lobby_connections),
+                "device_connected": device_id in lobby_connections
+            }
+        else:
+            debug_info["lobby_specific"] = {
+                "lobby_exists": False,
+                "connected_devices": [],
+                "connection_count": 0,
+                "device_connected": False
+            }
+        
+        # Add device-specific info
+        if device_id in connection_manager.device_to_lobby:
+            mapped_lobby = connection_manager.device_to_lobby[device_id]
+            debug_info["device_specific"] = {
+                "has_lobby_mapping": True,
+                "mapped_lobby": mapped_lobby,
+                "mapping_matches": mapped_lobby == lobby_code
+            }
+        else:
+            debug_info["device_specific"] = {
+                "has_lobby_mapping": False,
+                "mapped_lobby": None,
+                "mapping_matches": False
+            }
+        
+        # Add any additional info passed in
+        if additional_info:
+            debug_info["additional"] = additional_info
+        
+        log_lobby_event("websocket_debug_info", debug_info, device_id)
+        
+    except Exception as e:
+        log_lobby_event("websocket_debug_info_error", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "message": "Error generating WebSocket debug info"
+        }, device_id)

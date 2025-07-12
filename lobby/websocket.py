@@ -12,7 +12,7 @@ from .models import (
 )
 from .utils import (
     log_lobby_event, validate_device_id, is_countdown_active, 
-    get_countdown_remaining
+    get_countdown_remaining, log_websocket_debug_info
 )
 
 class ConnectionManager:
@@ -25,93 +25,299 @@ class ConnectionManager:
         self.device_to_lobby: Dict[str, str] = {}
         # Background tasks for countdown management
         self.countdown_tasks: Dict[str, asyncio.Task] = {}
+        
+        log_lobby_event("connection_manager_initialized", {
+            "message": "WebSocket connection manager initialized"
+        })
     
     async def connect(self, websocket: WebSocket, lobby_code: str, device_id: str):
         """Accept WebSocket connection and register it"""
-        await websocket.accept()
-        
-        if lobby_code not in self.active_connections:
-            self.active_connections[lobby_code] = {}
-        
-        # Store connection
-        self.active_connections[lobby_code][device_id] = websocket
-        self.device_to_lobby[device_id] = lobby_code
-        
-        log_lobby_event("websocket_connected", {
-            "lobby_code": lobby_code,
-            "device_id": device_id,
-            "total_connections": len(self.active_connections[lobby_code])
-        }, device_id)
+        try:
+            log_lobby_event("websocket_connection_attempt", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "websocket_state": str(websocket.client_state if hasattr(websocket, 'client_state') else "unknown"),
+                "message": "Attempting to accept WebSocket connection"
+            }, device_id)
+            
+            await websocket.accept()
+            
+            log_lobby_event("websocket_connection_accepted", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "WebSocket connection accepted successfully"
+            }, device_id)
+            
+            if lobby_code not in self.active_connections:
+                self.active_connections[lobby_code] = {}
+                log_lobby_event("lobby_connection_pool_created", {
+                    "lobby_code": lobby_code,
+                    "message": "Created new connection pool for lobby"
+                }, device_id)
+            
+            # Check if device is already connected to this lobby
+            if device_id in self.active_connections[lobby_code]:
+                log_lobby_event("websocket_duplicate_connection", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "message": "Device already connected to this lobby, replacing connection"
+                }, device_id)
+            
+            # Store connection
+            self.active_connections[lobby_code][device_id] = websocket
+            self.device_to_lobby[device_id] = lobby_code
+            
+            connection_count = len(self.active_connections[lobby_code])
+            total_connections = sum(len(connections) for connections in self.active_connections.values())
+            
+            log_lobby_event("websocket_connected", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "lobby_connections": connection_count,
+                "total_connections": total_connections,
+                "message": f"WebSocket connection established successfully. {connection_count} connections in lobby, {total_connections} total"
+            }, device_id)
+            
+        except Exception as e:
+            log_lobby_event("websocket_connection_failed", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Failed to establish WebSocket connection"
+            }, device_id)
+            raise
     
     def disconnect(self, lobby_code: str, device_id: str):
         """Remove WebSocket connection"""
-        if lobby_code in self.active_connections:
-            if device_id in self.active_connections[lobby_code]:
-                del self.active_connections[lobby_code][device_id]
-                
-                # Clean up empty lobby connections
-                if not self.active_connections[lobby_code]:
-                    del self.active_connections[lobby_code]
-                    # Cancel countdown task if exists
-                    if lobby_code in self.countdown_tasks:
-                        self.countdown_tasks[lobby_code].cancel()
-                        del self.countdown_tasks[lobby_code]
-        
-        if device_id in self.device_to_lobby:
-            del self.device_to_lobby[device_id]
-        
-        log_lobby_event("websocket_disconnected", {
-            "lobby_code": lobby_code,
-            "device_id": device_id
-        }, device_id)
+        try:
+            log_lobby_event("websocket_disconnection_attempt", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Attempting to disconnect WebSocket"
+            }, device_id)
+            
+            connection_existed = False
+            
+            if lobby_code in self.active_connections:
+                if device_id in self.active_connections[lobby_code]:
+                    connection_existed = True
+                    del self.active_connections[lobby_code][device_id]
+                    log_lobby_event("websocket_connection_removed", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "remaining_connections": len(self.active_connections[lobby_code]),
+                        "message": "WebSocket connection removed from lobby"
+                    }, device_id)
+                    
+                    # Clean up empty lobby connections
+                    if not self.active_connections[lobby_code]:
+                        del self.active_connections[lobby_code]
+                        log_lobby_event("lobby_connection_pool_removed", {
+                            "lobby_code": lobby_code,
+                            "message": "Removed empty connection pool for lobby"
+                        }, device_id)
+                        
+                        # Cancel countdown task if exists
+                        if lobby_code in self.countdown_tasks:
+                            self.countdown_tasks[lobby_code].cancel()
+                            del self.countdown_tasks[lobby_code]
+                            log_lobby_event("countdown_task_cancelled", {
+                                "lobby_code": lobby_code,
+                                "message": "Cancelled countdown task due to empty lobby"
+                            }, device_id)
+                else:
+                    log_lobby_event("websocket_connection_not_found", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "message": "Connection not found in lobby pool"
+                    }, device_id)
+            else:
+                log_lobby_event("lobby_connection_pool_not_found", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "message": "Lobby connection pool not found"
+                }, device_id)
+            
+            if device_id in self.device_to_lobby:
+                del self.device_to_lobby[device_id]
+                log_lobby_event("device_lobby_mapping_removed", {
+                    "device_id": device_id,
+                    "lobby_code": lobby_code,
+                    "message": "Removed device to lobby mapping"
+                }, device_id)
+            
+            total_connections = sum(len(connections) for connections in self.active_connections.values())
+            
+            log_lobby_event("websocket_disconnected", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "connection_existed": connection_existed,
+                "total_connections": total_connections,
+                "message": f"WebSocket disconnection completed. {total_connections} total connections remaining"
+            }, device_id)
+            
+        except Exception as e:
+            log_lobby_event("websocket_disconnection_error", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Error during WebSocket disconnection"
+            }, device_id)
     
     async def send_personal_message(self, message: dict, lobby_code: str, device_id: str):
         """Send message to specific player"""
-        if (lobby_code in self.active_connections and 
-            device_id in self.active_connections[lobby_code]):
+        try:
+            log_lobby_event("websocket_send_attempt", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message_type": message.get("type", "unknown"),
+                "message": "Attempting to send personal message"
+            }, device_id)
             
-            websocket = self.active_connections[lobby_code][device_id]
-            try:
-                await websocket.send_text(json.dumps(message, default=str))
-            except Exception as e:
-                log_lobby_event("websocket_send_error", {
+            if lobby_code not in self.active_connections:
+                log_lobby_event("websocket_send_failed_no_lobby", {
                     "lobby_code": lobby_code,
                     "device_id": device_id,
-                    "error": str(e)
-                })
-                # Remove broken connection
-                self.disconnect(lobby_code, device_id)
+                    "message": "Cannot send message - lobby not in active connections"
+                }, device_id)
+                return
+                
+            if device_id not in self.active_connections[lobby_code]:
+                log_lobby_event("websocket_send_failed_no_connection", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "message": "Cannot send message - device not connected to lobby"
+                }, device_id)
+                return
+            
+            websocket = self.active_connections[lobby_code][device_id]
+            message_json = json.dumps(message, default=str)
+            
+            log_lobby_event("websocket_sending_message", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message_size": len(message_json),
+                "message": f"Sending message of {len(message_json)} characters"
+            }, device_id)
+            
+            await websocket.send_text(message_json)
+            
+            log_lobby_event("websocket_message_sent", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message_type": message.get("type", "unknown"),
+                "message": "Personal message sent successfully"
+            }, device_id)
+            
+        except Exception as e:
+            log_lobby_event("websocket_send_error", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Error sending personal message"
+            }, device_id)
+            # Remove broken connection
+            self.disconnect(lobby_code, device_id)
     
     async def broadcast_to_lobby(self, message: dict, lobby_code: str, exclude_device: Optional[str] = None):
         """Broadcast message to all players in a lobby"""
-        if lobby_code not in self.active_connections:
-            return
-        
-        connections = self.active_connections[lobby_code].copy()
-        
-        for device_id, websocket in connections.items():
-            if exclude_device and device_id == exclude_device:
-                continue
-                
-            try:
-                await websocket.send_text(json.dumps(message, default=str))
-            except Exception as e:
-                log_lobby_event("websocket_broadcast_error", {
+        try:
+            log_lobby_event("websocket_broadcast_attempt", {
+                "lobby_code": lobby_code,
+                "exclude_device": exclude_device,
+                "message_type": message.get("type", "unknown"),
+                "message": "Attempting to broadcast message to lobby"
+            })
+            
+            if lobby_code not in self.active_connections:
+                log_lobby_event("websocket_broadcast_failed_no_lobby", {
                     "lobby_code": lobby_code,
-                    "device_id": device_id,
-                    "error": str(e)
+                    "message": "Cannot broadcast - lobby not in active connections"
                 })
-                # Remove broken connection
-                self.disconnect(lobby_code, device_id)
+                return
+            
+            connections = self.active_connections[lobby_code].copy()
+            target_count = len([d for d in connections.keys() if d != exclude_device])
+            
+            log_lobby_event("websocket_broadcast_starting", {
+                "lobby_code": lobby_code,
+                "total_connections": len(connections),
+                "target_connections": target_count,
+                "exclude_device": exclude_device,
+                "message": f"Broadcasting to {target_count} connections"
+            })
+            
+            successful_sends = 0
+            failed_sends = 0
+            
+            for device_id, websocket in connections.items():
+                if exclude_device and device_id == exclude_device:
+                    continue
+                    
+                try:
+                    message_json = json.dumps(message, default=str)
+                    await websocket.send_text(message_json)
+                    successful_sends += 1
+                    
+                    log_lobby_event("websocket_broadcast_sent", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "message": "Broadcast message sent to device"
+                    }, device_id)
+                    
+                except Exception as e:
+                    failed_sends += 1
+                    log_lobby_event("websocket_broadcast_error", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "message": "Error sending broadcast message to device"
+                    }, device_id)
+                    # Remove broken connection
+                    self.disconnect(lobby_code, device_id)
+            
+            log_lobby_event("websocket_broadcast_completed", {
+                "lobby_code": lobby_code,
+                "successful_sends": successful_sends,
+                "failed_sends": failed_sends,
+                "message": f"Broadcast completed: {successful_sends} successful, {failed_sends} failed"
+            })
+            
+        except Exception as e:
+            log_lobby_event("websocket_broadcast_fatal_error", {
+                "lobby_code": lobby_code,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Fatal error during broadcast"
+            })
     
     def get_lobby_connection_count(self, lobby_code: str) -> int:
         """Get number of active connections for a lobby"""
-        return len(self.active_connections.get(lobby_code, {}))
+        count = len(self.active_connections.get(lobby_code, {}))
+        log_lobby_event("websocket_connection_count_check", {
+            "lobby_code": lobby_code,
+            "connection_count": count,
+            "message": f"Lobby has {count} active connections"
+        })
+        return count
     
     def is_player_connected(self, lobby_code: str, device_id: str) -> bool:
         """Check if a player is connected to lobby WebSocket"""
-        return (lobby_code in self.active_connections and 
-                device_id in self.active_connections[lobby_code])
+        is_connected = (lobby_code in self.active_connections and 
+                       device_id in self.active_connections[lobby_code])
+        
+        log_lobby_event("websocket_connection_check", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "is_connected": is_connected,
+            "message": f"Player connection status: {'connected' if is_connected else 'not connected'}"
+        }, device_id)
+        
+        return is_connected
     
     async def start_countdown_task(self, lobby_code: str, supabase: Client):
         """Start countdown task for a lobby"""
@@ -252,106 +458,344 @@ class LobbyWebSocketHandler:
     async def handle_connection(self, websocket: WebSocket, lobby_code: str, device_id: str):
         """Handle new WebSocket connection"""
         
+        log_lobby_event("websocket_handler_start", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "message": "Starting WebSocket connection handler"
+        }, device_id)
+        
         # Validate device_id
+        log_lobby_event("websocket_validating_device", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "message": "Validating device_id format"
+        }, device_id)
+        
         if not validate_device_id(device_id):
+            log_lobby_event("websocket_invalid_device", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Invalid device_id format, closing connection"
+            }, device_id)
             await websocket.close(code=4001, reason="Invalid device_id")
             return
         
+        log_lobby_event("websocket_device_valid", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "message": "Device_id validation passed"
+        }, device_id)
+        
         # Validate lobby exists and player is member
+        log_lobby_event("websocket_validating_lobby", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "message": "Validating lobby membership"
+        }, device_id)
+        
         lobby_check = await self._validate_lobby_membership(lobby_code, device_id)
         if not lobby_check:
+            log_lobby_event("websocket_invalid_lobby", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Player is not a member of this lobby, closing connection"
+            }, device_id)
             await websocket.close(code=4004, reason="Not a member of this lobby")
             return
         
+        log_lobby_event("websocket_lobby_valid", {
+            "lobby_code": lobby_code,
+            "device_id": device_id,
+            "message": "Lobby membership validation passed"
+        }, device_id)
+        
         try:
+            log_lobby_event("websocket_connecting", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Connecting to lobby WebSocket"
+            }, device_id)
+            
             # Connect to lobby
             await manager.connect(websocket, lobby_code, device_id)
+            
+            log_lobby_event("websocket_sending_initial_state", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Sending initial lobby state"
+            }, device_id)
             
             # Send initial lobby state
             await self._send_lobby_state(lobby_code, device_id)
             
+            log_lobby_event("websocket_checking_countdown", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Checking if countdown should start"
+            }, device_id)
+            
             # Start countdown if needed
             await self._check_and_start_countdown(lobby_code)
+            
+            log_lobby_event("websocket_connection_ready", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "WebSocket connection fully established and ready"
+            }, device_id)
+            
+            # Log comprehensive debug info about connection state
+            log_websocket_debug_info(lobby_code, device_id, manager, {
+                "connection_phase": "ready",
+                "message": "Connection fully established"
+            })
             
             # Listen for disconnection
             try:
                 while True:
                     # Keep connection alive - in a real app you might want to handle incoming messages here
-                    await websocket.receive_text()
+                    log_lobby_event("websocket_waiting_for_message", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "message": "Waiting for WebSocket message"
+                    }, device_id)
                     
-            except WebSocketDisconnect:
-                pass
+                    message = await websocket.receive_text()
+                    
+                    log_lobby_event("websocket_message_received", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "message_length": len(message),
+                        "message": f"Received WebSocket message of {len(message)} characters"
+                    }, device_id)
+                    
+            except WebSocketDisconnect as e:
+                log_lobby_event("websocket_disconnected_by_client", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "disconnect_code": getattr(e, 'code', 'unknown'),
+                    "disconnect_reason": getattr(e, 'reason', 'unknown'),
+                    "message": "Client disconnected from WebSocket"
+                }, device_id)
+                
+                # Log debug info about connection state when disconnected
+                log_websocket_debug_info(lobby_code, device_id, manager, {
+                    "connection_phase": "disconnected",
+                    "disconnect_code": getattr(e, 'code', 'unknown'),
+                    "disconnect_reason": getattr(e, 'reason', 'unknown'),
+                    "message": "Connection state when client disconnected"
+                })
                 
         except Exception as e:
             log_lobby_event("websocket_error", {
                 "lobby_code": lobby_code,
                 "device_id": device_id,
-                "error": str(e)
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Error in WebSocket connection handler"
+            }, device_id)
+            
+            # Log debug info about connection state when error occurs
+            log_websocket_debug_info(lobby_code, device_id, manager, {
+                "connection_phase": "error",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Connection state when error occurred"
             })
         finally:
+            log_lobby_event("websocket_handler_cleanup", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Starting WebSocket connection cleanup"
+            }, device_id)
+            
             # Handle disconnection
             await self._handle_disconnection(lobby_code, device_id)
+            
+            log_lobby_event("websocket_handler_complete", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "WebSocket connection handler completed"
+            }, device_id)
     
     async def _validate_lobby_membership(self, lobby_code: str, device_id: str) -> bool:
         """Validate that player is a member of the lobby"""
         try:
+            log_lobby_event("websocket_membership_validation_start", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Starting lobby membership validation"
+            }, device_id)
+            
             # Check if lobby exists and player is a member
+            log_lobby_event("websocket_querying_lobby_members", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Querying lobby_members table"
+            }, device_id)
+            
             result = self.supabase.table("lobby_members")\
                 .select("lobby_id")\
                 .eq("device_id", device_id)\
                 .execute()
             
             if not result.data:
+                log_lobby_event("websocket_no_lobby_membership", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "message": "Device not found in any lobby"
+                }, device_id)
                 return False
             
+            lobby_id = result.data[0]["lobby_id"]
+            log_lobby_event("websocket_found_lobby_membership", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "lobby_id": lobby_id,
+                "message": f"Found device in lobby with ID: {lobby_id}"
+            }, device_id)
+            
             # Get lobby info
+            log_lobby_event("websocket_querying_lobby_info", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "lobby_id": lobby_id,
+                "message": "Querying lobbies table for lobby info"
+            }, device_id)
+            
             lobby_result = self.supabase.table("lobbies")\
                 .select("code")\
-                .eq("id", result.data[0]["lobby_id"])\
+                .eq("id", lobby_id)\
                 .execute()
             
             if not lobby_result.data:
+                log_lobby_event("websocket_lobby_not_found", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "lobby_id": lobby_id,
+                    "message": "Lobby not found in lobbies table"
+                }, device_id)
                 return False
             
-            return lobby_result.data[0]["code"] == lobby_code.upper()
+            actual_code = lobby_result.data[0]["code"]
+            expected_code = lobby_code.upper()
+            is_valid = actual_code == expected_code
             
-        except Exception:
+            log_lobby_event("websocket_code_comparison", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "lobby_id": lobby_id,
+                "actual_code": actual_code,
+                "expected_code": expected_code,
+                "is_valid": is_valid,
+                "message": f"Code comparison: {actual_code} == {expected_code} -> {is_valid}"
+            }, device_id)
+            
+            return is_valid
+            
+        except Exception as e:
+            log_lobby_event("websocket_membership_validation_error", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Error during lobby membership validation"
+            }, device_id)
             return False
     
     async def _send_lobby_state(self, lobby_code: str, device_id: str):
         """Send current lobby state to connected player"""
         try:
+            log_lobby_event("send_lobby_state_start", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Starting to send lobby state"
+            }, device_id)
+            
             lobby_with_members = await self._get_lobby_with_members(lobby_code)
-            if lobby_with_members:
+            if not lobby_with_members:
+                log_lobby_event("send_lobby_state_no_lobby", {
+                    "lobby_code": lobby_code,
+                    "device_id": device_id,
+                    "message": "No lobby found with members"
+                }, device_id)
+                return
+            
+            log_lobby_event("send_lobby_state_lobby_found", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "lobby_id": lobby_with_members.lobby.id,
+                "member_count": len(lobby_with_members.members),
+                "message": f"Found lobby with {len(lobby_with_members.members)} members"
+            }, device_id)
+            
+            # Get player data for usernames
+            device_ids = [member.device_id for member in lobby_with_members.members]
+            players_data = {}
+            
+            log_lobby_event("send_lobby_state_getting_players", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "device_ids": device_ids,
+                "message": f"Getting player data for {len(device_ids)} devices"
+            }, device_id)
+            
+            if device_ids:
+                players_result = self.supabase.table("players")\
+                    .select("device_id, user_name")\
+                    .in_("device_id", device_ids)\
+                    .execute()
                 
-                # Get player data for usernames
-                device_ids = [member.device_id for member in lobby_with_members.members]
-                players_data = {}
-                
-                if device_ids:
-                    players_result = self.supabase.table("players")\
-                        .select("device_id, user_name")\
-                        .in_("device_id", device_ids)\
-                        .execute()
-                    
-                    if players_result.data:
-                        players_data = {p["device_id"]: p for p in players_result.data}
-                
-                lobby_info = lobby_with_members.to_lobby_info(players_data)
-                
-                message = WebSocketMessage(
-                    type=WebSocketEventType.PLAYER_JOINED,
-                    data={"lobby": lobby_info.dict()}
-                ).dict()
-                
-                await manager.send_personal_message(message, lobby_code, device_id)
+                if players_result.data:
+                    players_data = {p["device_id"]: p for p in players_result.data}
+                    log_lobby_event("send_lobby_state_players_found", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "players_found": len(players_data),
+                        "message": f"Found {len(players_data)} player records"
+                    }, device_id)
+                else:
+                    log_lobby_event("send_lobby_state_no_players", {
+                        "lobby_code": lobby_code,
+                        "device_id": device_id,
+                        "message": "No player records found"
+                    }, device_id)
+            
+            log_lobby_event("send_lobby_state_creating_message", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Creating lobby state message"
+            }, device_id)
+            
+            lobby_info = lobby_with_members.to_lobby_info(players_data)
+            
+            message = WebSocketMessage(
+                type=WebSocketEventType.PLAYER_JOINED,
+                data={"lobby": lobby_info.dict()}
+            ).dict()
+            
+            log_lobby_event("send_lobby_state_sending_message", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message_type": message.get("type"),
+                "message": "Sending lobby state message"
+            }, device_id)
+            
+            await manager.send_personal_message(message, lobby_code, device_id)
+            
+            log_lobby_event("send_lobby_state_complete", {
+                "lobby_code": lobby_code,
+                "device_id": device_id,
+                "message": "Lobby state sent successfully"
+            }, device_id)
                 
         except Exception as e:
             log_lobby_event("send_lobby_state_error", {
                 "lobby_code": lobby_code,
                 "device_id": device_id,
-                "error": str(e)
-            })
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "message": "Error sending lobby state"
+            }, device_id)
     
     async def _check_and_start_countdown(self, lobby_code: str):
         """Check if countdown should be running and start it if needed"""
